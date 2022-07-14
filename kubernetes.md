@@ -656,7 +656,7 @@ Label 的特点：
 >
 > * 版本标签："version":"release", "version":"stable"...
 > * 环境标签："environment":"dev", "environment":"test"
-> * 架构标签："tier":"fronted", "tier":"backend"
+> * 架构标签："tier":"frontend", "tier":"backend"
 
 标签定义完毕之后，还要考虑到标签的选择，这就要使用到 Label Selector，即：
 
@@ -674,4 +674,293 @@ Label 的特点：
 
 * 基于集合的 Label Selector
 
-  name in (master, salve):
+  name in (master, salve):选择所有包含 Label 中 key="name" 且 value="salve" 或 “master” 的对象
+
+  Name not in (frontend):  选择所有包含 Label 中的 key="name" 且 value 不等于 "frontend" 的对象
+
+标签的选择可以使用多个，此时将多个 Label Selector 进行组合，使用逗号 "," 进行分隔即可。例如：
+
+​	   name=salve, env != production
+
+​		name not in (frontend), env != production
+
+
+
+**命令方式**
+
+```powershell
+# 为 pod 资源打标签
+kubectl label pod pod-name version=1.0 -n dev
+# 为 pod 资源更新标签
+kubectl label pod pod-name version=2.0 -n dev --overwrite
+# 查看标签
+kubectl get pod pod-name -n dev --show-labels
+# 筛选标签
+kubectl get pod pod-name -n dev -l version=2.0 --show-labels
+#删除标签
+kubectl label  pod pod-name -n dev tire-  // 标签 -
+```
+
+**配置方式**
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  namespace: dev
+  labels:
+    version: "3.0"
+    env: "test"
+spec:
+  containers:
+  - image: nginx:1.17.1
+    imagePullPolicy: IfNotPresent
+    name: pod
+    ports:
+    - name: nginx-port
+      containerPort: 80
+      protocol: TCP
+```
+
+
+
+## 4.4 Deployment
+
+​	在 kubernetes 中，Pod 是最小的控制单元，但是 kubernetes 很少直接控制 pod ，一般都是通过 pod 控制器来完成的。Pod 控制器用于 Pod 的管理，确保 pod 资源符合预期的状态，当 pod 的资源出现故障时，会尝试进行重启或重建 pod 。
+
+​	在 kubernetes 控制器的种类很多，这里介绍： deployment。
+
+// todo  image
+
+**命令操作**
+
+```powershell
+# 命令格式： kubectl run deployment名称 [参数]
+# --image 指定 pod 的镜像
+# --port 指定端口
+# --replicas 指定创建 pod 数量
+# --namespace 指定 namespace
+
+kubectl run nginx --image=nginx:1.17.1 --port=80 --replicas=3 -n dev
+
+# 查看创建的 pod 
+kubectl get pod -n dev
+# 查看deployment 的信息
+kubectl get deploy deploy-name -n dev
+
+# UP-TO-DATE：成功升级的副本数量
+# AVAILABLE: 可用副本的数量
+kubectl get deploy -n dev -o wide
+
+# 查看 deployment 详细信息
+kubectl describe deploy deploy-name -n dev
+# 删除 deployment
+kubectl delete deploy name -n dev
+```
+
+ **配置操作**
+
+创建 deploy-nginx.yaml，内容如下：
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: dev
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      run: nginx
+  template:
+    metadata:
+      labels:
+        run: nginx
+    spec:
+      containers:
+      - image: nginx:1.17.1
+        imagePullPolicy: IfNotPresent
+        name: pod
+        ports:
+        - name: nginx-port
+          containerPort: 80
+          protocol: TCP
+```
+
+然后就可以执行对应的创建和删除命令了：
+
+​	创建：kubectl create -f deploy-nginx.yaml
+
+​	删除：kubectl delete -f deploy-nginx.yaml
+
+
+
+## 4.5 Service
+
+能利用 Deployment 来创建一组 pod 来提供具有高可用性的服务。虽然每个 pod 都会分配一个单独的 pod IP，然而却存在如下两问题：
+
+* Pod IP 都随着 pod 的重建产生变化
+* Pod IP 仅仅是集群内可见的虚拟 IP，外部无法访问
+
+这样对于访问这个服务带来了难度。因此， kubernetes 设计了 Serveice 来解决这个问题。
+
+Service 可以看作是一组同类 Pod **对外的访问接口**。借助 Service 应用可方便地实现服务发现和负载均衡。
+
+//todo  image
+
+**操作一：创建集群内部可访问的 service**
+
+```powershell
+# 暴露 Service
+kubectl expose deploy nginx --name=svc-nginx1 --type=ClusterIP --port=80 --target-port=80 -n dev
+
+# 查看 Service
+kubectl get svc svc-nginx -n dev -o wide
+
+# 这里产生了一个 ClusterIP ，这就是 Service 的 IP，在 Service 的生命周期中，这个地址是不会变动的
+# 可以通过这个 IP 访问当前 service 对应的 Pod
+```
+
+
+
+**操作二：创建集群外部也可访问的 Service**
+
+```powershell
+# 上面创建的 Service 的 type 类型为 ClusterIP，这个 IP 地址只能集群内部访问
+# 如果需要创建外部也可以访问的 Service ，需要修改 type 为 NodePort
+kubectl expose deploy nginx --name=svc-nginx2 --type=NodePort --port=80 --target-port=80 -n dev
+
+# 此时查看，会发现出现了 NodePort 类型的 Service，而且有一对 Port 
+kubectl get svc -n dev -o wide
+
+# 就可以通过集群外的主机访问节点 IP:port 
+```
+
+
+
+**删除 Service**
+
+```
+kubectl delete svc svc-name -n dev
+```
+
+
+
+**配置方式**
+
+创建一个 svc-nginx.yaml，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc-nginx
+  namespace: dev
+spec:
+  ClusterIP: 172.0.2.12
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 80
+  selector:
+    run: nginx
+  type: ClusterIP
+```
+
+然后就可以执行对应的创建和删除命令了：
+
+​	创建：kubectl create -f svc-nginx.yaml
+
+​	删除：kubectl delete -f svc-nginx.yaml
+
+
+
+# 第五章 Pod 详解
+
+## 5.1 Pod 介绍
+
+### 5.1.1 Pod 结构
+
+// todo image
+
+每个 Pod 中都可以包含一个或者多个容器，这些容器可以分为两类：
+
+* 用户程序所在的容器，数量可多可少
+
+* Pause 容器，这是每个 Pod 都会有的一个**根容器**，它的作用有两个：
+
+  * 可以以它为依据，平贵整个 Pod 的 健康状态
+
+  * 可以在根容器上设置 IP 地址，其他容器都是此 IP，以实现 Pod 内部的网路通信
+
+    ```
+    这里是 Pod 内部通讯，Pod 的之间通讯采用虚拟二层网络技术实现
+    ```
+
+### 5.1.2 Pod 定义
+
+下面是 Pod 的资源清单
+
+```yaml
+apiVerson: v1    #必选，版本号，例如 v1
+kind: Pod  #必选，资源类型，例如 Pod
+metadate:  # 必选，元数据
+  name: string # 必选，Pod 名称
+  namespace: # Pod 所属的命名空间，默认为 "default"
+  labels:   # 自定义标签
+    - name: string
+spec:  # 必选，Pod 中容器的详细定义
+  containers: # 必选， Pod 容器列表
+  - name: # 必选，容器名称
+    image: # 必选，容器的镜像名称
+    imagePullPolicy: [ Always|Never|IfNotPresent ] # 获取镜像的策略
+    command: [string] # 容器的启动命令列表，如不指定，使用打包时使用的启动命令
+    args: [string] # 容器的启动命令参数列表
+    workingDir: string # 容器的工作目录
+    volumeMounts: # 挂载到容器内部的存储卷位置
+    - name: string # 引用 Pod 定义的共享存储卷的名称，需要 volume[] 部分定义的卷名
+      mountPath: string # 存储卷在容器内 mount 的绝对路径，应少于 512  字符
+      readOnly: boolean # 是否为只读模式
+    port: # 需要暴露的端口库号列表
+    - name: string # 端口的名称
+      containerPort: int # 容器需要监听的端口号
+      hostPort: int # 容器所在主机需要监听的端口号，默认与 Container 相同
+      protocol: string # 端口协议，支持 TCP 和 UDP，默认 TCP
+    env:  # 容器运行前需设置的环境变量列表
+    - name: string # 环境变量名称
+      value: string # 环境变量的值
+    resources: # 资源限制和请求的设置
+      limits: # 资源限制的值
+  
+```
+
+```powershell
+# 小提示：
+# 可以通过一个命令来查看每种资源的可配置项
+# kubectl explain 资源类型
+# kubectl explain 资源类型.属性
+kubectl explain pod
+kubectl explain pod.metadata
+```
+
+在 kubernetes 中所有资源的一级属性都是一样的，主要包含 5 部分：
+
+* apiVersion <string>  版本，由 kubenetes 内部定义，版本号必须可以用 kubetctl api-versions 查询到
+* kind  <string>            类型，由 kubenetes 内部定义，版本号必须可以用 kubetctl api-resources 查询到
+* metadata <Object>   元数据，主要是资源标识和说明，常用的有 name、namespace、labels 等
+* spec <Object>            描述，这里配置中最重要的一部分，里面是对各种资源配置的详细描述
+* status <Object>         状态信息，里面的内容不需要定义，由 kubernetes 自动生成
+
+在上面的属性中，spec 是接下来研究的重点，看常见的子属性：
+
+* containers <[]Object>  容器列表，用于定义容器的详细信息
+* nodeName <string> 根据 nodeName 的值将 pod 调度到指定的 Node 节点上
+* nodeSelector <map[]> 根据 nodeSelector 中定义的信息选择将该 pod 调度到这些 label 的 Node 上
+* hostNetwork  <boolean> 是否使用主机网络模式，默认为 false，如果设置为 true，表示使用宿主机网络
+* volumes <[]object> 存储卷，用于定义 pod 上面挂在的存储信息
+* restartPolicy <string> 重启策略，表示 pod 在遇到故障的时候的处理策略
+
+## 5.2 Pod 配置
+
