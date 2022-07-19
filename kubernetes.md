@@ -1250,3 +1250,70 @@ kubectl create -f pod-resources.yaml
 * 失败（failed）：所有容器都已经终止，但至少有一个容器终止失败，即容器返回了非 0 值的退出状态
 * 未知（unknown）：apiserver 无法正常获取到 pod 对象的状态信息，通常由网络通信失败所导致
 
+### 5.3.1 创建和终止
+
+**Pod 的创建过程**
+
+1. 用户通过 kubectl 和其他 api 客户端提交需要创建的 pod 信息给 apiServer
+2. apiServer 开始生成 pod 对象的信息，并将信息存入 etcd，然后返回确认信息至客户端
+3. apiServer 开始反映 etcd 中的 pod 对象的变化，其他组件使用 watch 机制来跟踪检查 apiServer 上的变动
+4. Scheduler 发现由新的 pod 对象要创建，开始为 pod 分配主机并将结果信息更新至 apiServer
+5. Node 节点上的 kubelet 发现有 pod 调度过来，尝试调用 docker 启动容器，并将结果回送至 apiServer
+6. apiServer 将接收到的 pod 状态信息存入 etcd 中
+
+![](./images/chapter05/5.3.1.png)
+
+ **Pod 的终止过程**
+
+1. 用户向 apiServer 发送删除 pod 对象的命令
+2. apiServer 中的 pod 对象信息会随着时间的推移而更新，在宽限期内（默认 30s ），pod 被视为为 dead
+3. 将 pod 标记为 terminating 状态
+4. Kubelet 在监控到 pod 对象转为 terminating 状态的同时启动 pod 关闭过程
+5. 端点控制器监控到 pod 对象的关闭行为时将其从所有匹配到此端点的 service 资源的端点列表中移除
+6. 如果当前 pod 对象定义了 preStop 钩子处理器，则在其标记为 terminating 后即会以同步的方式启动执行
+7. Pod 对象中的容器进程接收到停止信号
+8. 宽限期结束后，若 pod 中还存在仍在运行的进行，那么 pod 对象会收到立即终止的信号
+9. Kubelet 请求 apiServer 将此 pod 资源的宽限期设置为 0 从而完成删除操作，此时 pod 对于用户不可见
+
+
+
+### 5.3.2
+
+初始化容器是在 pod 的主容器启动之前要运行的容器，主要是做一些主容器的前置工作，它具有两大特征：
+
+1. 初始化容器必须运行完成直至结束，若某初始化容器运行失败，那么 kubernetes 需要重启它直到成功完成
+2. 初始化容器必须按照定义的顺序执行，当且仅当一个成功之后，后面的一个才能运行
+
+初始化容器有很多的应用场景，下面列出的是最常见的几个：
+
+* 提供主容器镜像中不具备的工具程序或自定义代码
+* 初始化容器要先于应用容器串行启动并运行完成，因此可用于延后应用容器的启动直至其依赖的条件得到满足
+
+下面是一个案例，模拟下面这个需求：
+
+​	假设要以主容器运行 nginx，但是要求在运行 nginx 之前先要能够连上 mysql 和 redis 所在的服务器
+
+​	为了简化测试，实现规定好 mysql 和 redis 服务器地址
+
+创建 pod-initcontainer.yaml，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-initcontainer
+  namespace: dev
+spec:
+  containers:
+  - name: main-container
+    iamge: nginx:1.17.1
+    ports:
+  initContainers:
+  - name: test-mysql
+    image: busybox:1.30
+    command: ['sh', '-c', 'until ping 192.182.1.3 -c 1; do echo waiting for mysql...; sleep 2;done;']
+  - name: test-redis
+    image: busybox:1.30
+    command: ['sh', '-c', 'until ping 192.182.1.4 -c 1; do echo waiting for redis...; sleep 2;done;']
+```
+
