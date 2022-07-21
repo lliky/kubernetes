@@ -1277,7 +1277,7 @@ kubectl create -f pod-resources.yaml
 
 
 
-### 5.3.2
+### 5.3.2 初始化容器
 
 初始化容器是在 pod 的主容器启动之前要运行的容器，主要是做一些主容器的前置工作，它具有两大特征：
 
@@ -1315,5 +1315,74 @@ spec:
   - name: test-redis
     image: busybox:1.30
     command: ['sh', '-c', 'until ping 192.182.1.4 -c 1; do echo waiting for redis...; sleep 2;done;']
+```
+
+
+
+### 5.3.3 钩子函数
+
+钩子函数能够感知自身生命周期中的事件，并在相应的时刻到来时运行用户 指定的程序代码
+
+kubernetes 在主容器的启动之后和停止之后提供了两个钩子函数：
+
+* Post start：容器创建之后执行，如果失败了会重启容器
+* Pre stop： 容器终止之前执行，执行完成之后容器将成功终止，在其完成之前会阻塞删除容器的操作
+
+钩子处理器支持三种方式定义：
+
+* exec 命名：在容器内执行一次命令
+
+  ```yaml
+  lifecycle:
+    postStart:
+      exec:
+        command:
+        - cat
+        - /tmp/healthy
+  ```
+
+* TCPSocket：在当前容器尝试访问指定的 socket
+
+  ```yaml
+  lifecycle:
+    postStart:
+      tcpSocket:
+        port: 8080
+  ```
+
+* HTTPGet：在当前容器中向某 url 发起 http 请求
+
+  ```yaml
+  lifecycle:
+    postSart:
+      httpGet:
+        path: / # URL 地址
+        port: 80 # 端口号
+        host: 192.168.109.100 # 主机地址
+        scheme: HTTP # 支持的协议 http 或者 https
+  ```
+
+接下来，以 exec 方式为例，演示下钩子函数的使用，创建 pod-hook-exec.yaml 文件，内容如下：
+
+```yaml
+apiVersion:
+kind: Pod
+metadata:
+  name: pod-hook-exec
+  namespace: dev
+spec:
+  containers:
+  - name: main-container
+    image: nginx:1.17.1
+    ports:
+    - name: nginx-port
+      containerPort: 80
+    lifecycle:
+      postStart:
+        exec:
+          command: ['/bin/sh', '-c', 'echo postStart... > /usr/share/nginx/html/index.html']
+      preStop:
+        exec:
+          command: ['/usr/bin/nginx', '-s', 'quit']
 ```
 
