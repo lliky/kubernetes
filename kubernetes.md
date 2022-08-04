@@ -1386,3 +1386,77 @@ spec:
           command: ['/usr/bin/nginx', '-s', 'quit']
 ```
 
+### 5.3.4 容器探测
+
+​	容器探测用于检测容器中的应用实例是否正常工作，是保障业务可用性的一种传统机制。如果经过探测，实例的状态不符合预期，那么  kubernetes 就会把该问题实力“摘除”，不承担业务流量， kubernetes 提供了两种探针来实现容器探测，分别是：
+
+* Liveness probes: 存活性探针，用于检测应用实例当前是否处于正常运行状态，如果不是， k8s 会重启容器
+* Readiness probes: 就绪性探针，用于检测应用实例当前是否可以接受请求，如果不能，k8s 不会转发流量
+
+> Liveness Probe 决定是否重启容器，readinessProbe 决定是否将请求转发给容器
+
+上面两种探针目前均支持三种探测方式：
+
+* Exec 命令：在容器内执行一次命令，如果命令执行的退出码为 0，则认为程序正常，否则不正常
+
+  ```yaml
+  livenessProbe:
+    exec:
+      command:
+      - cat
+      - /tmp/healthy
+  ```
+
+* TCPSocket: 将会尝试访问一个用户容器的端口，如果能够建立这条连接，则认为程序正常，否则不正常
+
+  ```yaml
+  livenessProbe:
+    tcpSocket:
+      port: 8080
+  ```
+
+* HTTPGet: 调用容器内 Web 应用的 URL，如果返回的状态码在 200 和 399 之间，则认为程序正常，否则不正常
+
+  ```yaml
+  livenessProbe:
+    httpGet:
+      path: / #URL 地址
+      port: 80 # 端口号
+      host: 127.0.0.1 # 主机地址
+      scheme: HTTP #支持的协议， http 或者 https
+  ```
+
+以 liveness probes 为例，做几个演示：
+
+**方式一：Exec**
+
+创建 pod-liveness-exec.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-liveness-exec
+  namespace: dev
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.17.1
+    ports:
+    - name: nginx-port
+      containerPort: 80
+    livenessProbe:
+      exec:
+        command: ["/bin/cat", "/tmp/hello.txt"]
+```
+
+```powershell
+kubectl explain pod.spec.containers.livenessProbe
+FIELDS:
+  initialDelaySeconds  <integer>   # 容器启动后等待多少秒执行第一次探测
+  timeoutSeconds       <integer>   # 探测超时时间，默认 1s，最小 1ws
+  periodSeconds        <integer>   # 执行探测的频率。默认是 10s，最小 1s
+  failureThreshold     <integer>   # 连续探测失败多少次才被认定为失败。默认 2，最小 1
+  successTHreshold     <integer>   # 连续探测成功多少次才被认定为成功。默认 1
+```
+
