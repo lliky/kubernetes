@@ -1460,3 +1460,225 @@ FIELDS:
   successTHreshold     <integer>   # 连续探测成功多少次才被认定为成功。默认 1
 ```
 
+
+
+### 5.3.5 容器重启策略
+
+​	一旦容器探测出现了问题，kubernetes 就会对容器所在的 Pod 进行重启，其实这是由 pod 的重启策略决定的，pod 的重启策略有三种，分别如下：
+
+* Always  :  容器失效时，自动重启该容器，这也是默认值
+* OnFailure : 容器终止运行且退出码不为 0 时重启
+* Never : 不论状态为何，都不重启容器
+
+​	重启策略适用于 pod 对象中的所有容器，首次需要重启的容器，将在其需要时立即进行重启，随后再次需要重启的操作将由 kubelet 延迟一段时间后进行，且反复的重启操作的延迟时长为 10s, 20s, 40s, 80s, 160s 和 300, 300s 是最大延迟时长。
+
+
+
+## 5.4 Pod 调度 
+
+在默认情况下，一个 Pod 在哪个 Node 节点上运行，是由 Scheduler 组件用相应的算法计算出来的，这个过程是不受人工控制的。但是实际使用中，这并不满足的需求，因为很多情况下，我们想控制某些 pod 到达某些节点上，那么应该怎么做呢？这就要求了解 kubenetes 对 pod 的调度规则，kubenetes 提供了四大类调度方式：
+
+* 自动调度：运行在哪个节点完全由 scheduler 经过一系列的算法计算得出
+* 定向调度：NodeName, NodeSelector
+* 亲和性调度：NodeAffinity, PodAffinity, PodAntiAffinity
+* 污点（容忍）调度：Taints, Toleration
+
+### 5.4.1 定向调度
+
+​	定向调度，指的是利用在 pod 上声明 nodeName 或 nodeSelector，以此将 Pod 调度到期望的 node 节点上。注意，这里的调度是强制的，意味着即使要调度的目标 node 不存在，也会向上面进行调度。只不过 pod 运行失败而已。
+
+**NodeName**
+
+​	NodeName 用于强制约束 pod 调度到指定的 Name 的 Node 节点上。实验如下：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+	name: pod-nodename
+	namespace: dev
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.17.1
+  nodeName: node1 # 指定调度到 node1 节点上
+```
+
+**NodeSelector**
+
+​	NodeSelector 用于将 pod 调度到添加了指定标签的 node 节点上。它是通过 kubenetes 的 label-selector 机制实现的，也是就是说，在 pod 创建之前，会由 scheduler 使用 matchNodeSelector 调度策略进行 label 匹配，找出目标 node，然后将 pod 调度到目标节点，该匹配规则是强制约束。
+
+1. 为 node 添加标签
+
+   ```powershell
+   kubectl label nodes node1 nodeenv=pro
+   kubectl label nodes node2 nodeenv=test
+   ```
+
+2. 创建 node-nodeselector.yaml
+
+   ```yaml
+   apiVersion: v1
+   kind: Pod
+   metadata:
+   	name: pod-nodeselector
+   	namespace: dev
+   spec:
+     containers:
+     - name: nginx
+       image: nginx:1.17.1
+     nodeSelector: 
+     	nodeenv: pro # 指定调度到具有 nodeenv=pro 标签的节点上
+   ```
+
+### 5.4.2  亲和性调度
+
+​	上一节，介绍了两种定向调度的方式，使用起来非常方便，但是也是一定的问题，那就是如果没有满足条件的 Node，那么 pod 将不会运行，即使在集群中还有可用 Node 列表也不行，这就是限制了它的使用场景。
+
+​	基于上面的问题，kubernetes 还提供了一种亲和性调度（affinity）。它在 NodeSelector 的基础之上的进行了扩展，可以通过配置的形式，实现优先选择满足条件的 Node 进行调度，如果没有，也可以调度到不满足条件的节点上，使调度更加灵活。
+
+Affinity 主要分为三类：
+
+* nodeAffinity（node亲和性）：以 node 为目标，解决 pod 可以调用到哪些 node 的问题。
+* podAffinity （pod 亲和性）：以 pod 为目标，解决 pod 可以和哪些已存在的 pod 部署在同一个拓扑域中的问题
+* podAntiAffinity（pod 反亲和性）：以 pod 为目标，解决 pod 不能和哪些已存在 pod 部署在同一个拓扑域中的问题
+
+> 关于亲和性（反亲和性）使用场景的说明：
+>
+> **亲和性**：如果两个应用频繁交互，那就有必要利用亲和性让两个应用的尽可能靠近，这样可以减少因网络通信而带来的性能损耗
+>
+> **反亲和性**：当应用的采用多副本部署时，有必要采用反亲和性让各个应用实例打散分布在各个 node 上，这样可以提高服务的高可用性。
+
+#### 5.4.2.1 NodeAffinity
+
+来看一下，`NodeAffinity`  的可配置项：
+
+```markdown
+pod.spec.affinity.nodeAffinity
+	requiredDuringSchedulingIgnoreDuringExecution Node节点必须满足指定的所有规则才可以，相当于硬限制
+		nodeSelectorTerms 节点选择列表
+			matchFields 按节点字段列出的节点选择器要求列表
+			matchExpressions 按节点标签列出的节点选择器要求列表（推荐）
+				key 键
+				values 值
+				operator 关系符 支持 Exists, DoesNotExists, In, NotIn, Gt, Lt
+	preferredDuringSchedulingIgnoreDuringEXecution 优先调度到满足指定的规则的 Node，相当于软限制（倾向）
+		preference 一个节点选择器项，与相应的权重相关联
+		  matchFields 按节点字段列出的节点选择器要求列表
+			matchExpressions 按节点标签列出的节点选择器要求列表（推荐）
+				key 键
+				values 值
+				operator 关系符 支持 Exists, DoesNotExists, In, NotIn, Gt, Lt
+		weight 倾向权重，范围 1-100
+```
+
+```markdown
+关系符的使用说明：
+
+- matchExpressions:
+	- key: nodeenv    				# 匹配存在标签的 key 为 nodeenv 的节点
+	  operator: Exists
+	- key: nodeenv    				# 匹配标签的 key 为 nodeenv,且 value 是 "xxx" 或 "yyy" 的节点
+	  operator: In
+	  values: ["xxx","yyy"]
+	- key: nodeenv    				# 匹配标签的 key 为 nodeenv, 且 value 大于 "xxx" 的节点
+	  operator: Gt
+	  values: "xxx"
+```
+
+演示 `requiredDuringSchedulingIgnoreDuringExecution`
+
+创建 pod-nodeaffinity-required.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+	name: pod-nodeaffinity-required
+	namespace: dev
+spec:
+	containers:
+	- name: nginx
+		image: nginx:1.17.1
+	affinity: # 亲和性设置
+		nodeAffinity: # 设置 node 亲和性
+			requiredDuringSchedulingIgnoreDuringExecution: # 硬限制
+				nodeSelectorTerms:
+				- matchExpressions: # 匹配 env 的值在 ["xxx","yyy"]中的标签
+					- key: nodeenv
+						operator: In
+						values: ["xxx","yyy"]
+```
+
+演示 `preferredDuringSchedulingIgnoreDuringEXecution`
+
+创建 pod-node affinity-preferred.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+	name: pod-nodeaffinity-required
+	namespace: dev
+spec:
+	containers:
+	- name: nginx
+		image: nginx:1.17.1
+	affinity: # 亲和性设置
+		nodeAffinity: # 设置 node 亲和性
+			preferredDuringSchedulingIgnoreDuringEXecution: # 软限制
+			- weight: 1
+				preference:
+				  matchExpressions: # 匹配 env 的值在 ["xxx","yyy"]中的标签
+					- key: nodeenv
+						operator: In
+						values: ["xxx","yyy"]
+```
+
+```markdown
+NodeAffinity 规则设置的注意事项：
+	1. 如果同时定义了 nodeSelector 和 nodeAffinity，那么必须两个条件都得到满足， Pod 才能运行在指定的 Node 上
+	2. 如果 nodeAffinity 指定了多个 nodeSelectorTerms，那么只需要其中一个能够匹配成功即可
+	3. 如果一个 nodeSelectorTerms 中有多个 matchExpressions，则一个节点必须满足所有的才能匹配成功
+	4. 如果一个 pod 所在的 Node 在 pod 运行期间其标签发生了改变，不再符合该 pod 的节点亲和性需求，则系统忽略此变化
+```
+
+#### 5.4.2.2 podAffinity
+
+PodAffinity 主要实现以运行的 pod 为参照，实现让新创建的 pod 跟参照 pod 在一个区域的功能
+
+看 `podAffinity` 的可配置项：
+
+```markdown
+pod.spec.affinity.podAffinity
+	requiredDuringSchedulingIgnoreDuringExecution 硬限制
+		namespaces 指定参照 pod 的 namespaces
+		topologyKey 指定调度作用域
+		labelSelector 标签选择器
+			matchExpressions 按节点标签列出的节点选择器要求列表（推荐）
+				key 键
+				values 值
+				operator 关系符 支持 Exists, DoesNotExists, In, NotIn
+			matchLabels 指多个 matchExpressions 映射的内容
+		preferredDuringSchedulingIgnoreDuringEXecution 软限制
+			podAffinityTerm 选项
+			  namespaces
+			  topologyKey
+			  labelSelector
+			  	matchExpressions
+			  		key
+			  		value
+			  		operator
+			  	matchLabels
+			 weight 倾向权重， 1-100
+```
+
+```markdown
+topologyKey 用于指定调度时作用域
+	如果指定为 kubernetes.io/hostname，那就是以 node 节点为范围区分
+	如果指定为 beta.kubernetes.io/os，则以 node 节点的操作系统类型来区分
+```
+
+#### 5.4.2.3 podAntiAffinity
+
+配置方式和 podAffinity 是一样的
