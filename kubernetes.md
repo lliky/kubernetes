@@ -1725,3 +1725,218 @@ kubectl taint nodes node1 key-
 
 
 
+# 第六章 Pod 控制器详解
+
+## 6.1 Pod 控制器介绍
+
+在 kubernetes 中，按照 pod 的创建方式可以将其分为两类：
+
+* **自主式 pod **:kubernetes 直接创建出来的 pod，这种 pod 删除后就没有了，也不会重建
+* 控制器创建的 pod : 通过控制器创建的 pod ，这种 pod 删除之后还会自动重建
+
+> 什么是 Pod 控制器
+>
+> ​	Pod 控制器是管理 pod 的中间层，使用了 pod 控制器之后，我们只需要告诉 pod 控制器，想要多少个什么样的 pod 就可以了，它就会创建出满足条件的 pod 并确保每一个 pod 处于用户期望的状态，如果 pod 在运行中出现故障，控制器会基于指定策略重启动或重建 pod。
+
+在 kubenetes 中，有很多类型的 pod 控制器，每种都有自己的适合的场景，常见的有下面这些：
+
+* ReplicationController: 比较原始的 pod 控制器，已经被废弃，有 ReplicaSet 代替
+* ReplicaSet: 保证指定数量的 pod 运行，并支持 pod 数量变更，镜像版本变更
+* Deployment: 通过控制 ReplicaSet 来控制 pod ,并支持滚动升级、版本回退
+* Horizontal Pod Autoscaler: 可以根据集群负载自动调整Pod 的数量，实现削峰填谷
+* DaemonSet: 在集群中的指定的 Node 上都运行一个副本，一般用于守护进程类的任务
+* Job: 它创建出来的 Pod 只要完成任务就立即退出，用于执行一次性任务
+* CronJob: 它创建的 pod 会周期性的执行，用于执行周期性任务
+* StatefulSet: 管理有状态应用
+
+## 6.2 ReplicaSet(RS)
+
+​	ReplicaSet 的主要作用是**保证一定数量的 pod 能够正常运行**，它会持续监听这些 pod 的运行状态，一旦 pod 发生故障，就会重启或重建。同时它还支持对 **pod 数量的扩缩容**和版本镜像的升级。
+
+ReplicaSet 的资源清单文件：
+
+```yaml
+apiVersion: apps/v1 #版本号
+kind: ReplicaSet #类型
+metadata: # 元数据
+	name:	#rs 名称
+	namespace: # 所属命名空间
+	labels: # 标签
+		controller: rs
+spec: # 详情描述
+	replicas: 3 # 副本数量
+	selector: # 选择器，通过它指定该控制器管理哪些 pod 
+		matchLabels: # Labels 匹配规则
+			app: nginx-pod
+		matchExpressions: # Expressions 匹配规则
+			- {key: app, operator: In, values: [nginx-pod]}
+	template: # 模版，当副本数量不足时，会根据下面的模版创建 pod 副本
+		metadata:
+			labels:
+				app: nginx-pod
+		spec:
+			containers:
+			- name: nginx
+				image: nginx:1.17.1
+				ports:
+				- containerPort: 80
+```
+
+**创建ReplicaSet**
+
+创建 `pc-replicaset.yaml` 文件,内容如下：
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: pc-replicaset
+  namespace: dev
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-pod
+  template:
+    metadata:
+      labels:
+      app: nginx-pod
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.17.1
+```
+
+**扩缩容**
+
+```powershell
+# 编辑 rs 的副本数量,修改 spec:replicas: 6 即可
+kubectl edit rs pc-replicaset -n dev
+
+# 也可以直接使用命令实现
+# 使用 scale 命令实现扩缩容，后面 --replicas=n 直接指定目标数量即可
+kubectl scale rs pc-replicaset --replicas=2 -n dev
+```
+
+**镜像升级**
+
+```yaml
+# 编辑 rs 的容器镜像 - image:1.17.2
+kubectl edit rs pc-replicaset -n dev
+# 查看
+kubectl get rs -n dev -o wide
+
+# 用命令
+kubectl set image rs pc-replicaset nginx=nginx:1.17.1 -n dev
+```
+
+**删除 ReplicaSet**
+
+```powershell
+# 使用 kubectl delete 命令会删除此 RS 以及它管理的 pod
+# 在 kubernetes 删除 RS 前，会将 RS 的 Replicasclear 调整为 0，等待所有的 pod 被删除后，在执行 RS 对象的删除
+kubectl delete rs pc-replicaset -n dev
+
+# 如果希望仅仅删除 RS 对（保留 Pod），可以使用 kubectl delete 命令时添加 --cascade=false 选项（不推荐）
+kubectl delete rs pc-replicaset -n dev --cascade=false
+
+kubectl delete -f pc-replicaset.yaml
+```
+
+## 6.3 Deployment
+
+​	为了更好的解决服务编排的问题，引入了 deployment 控制器。这种控制器并不直接管理 pod ，而是通过管理 replicaSet 来间接管理 pod，即：Deployment 管理 ReplicaSet，ReplicaSet 管理 Pod。
+
+Deployment 主要功能有下面几个：
+
+* 支持 ReplicaSet 的所有功能
+* 支持发布的停止、继续
+* 支持版本滚动升级和版本回退
+
+Deployment 的资源清单文件：
+
+```yaml
+apiVersion: apps/v1 #版本号
+kind: Deployment #类型
+metadata: # 元数据
+	name:	#rs 名称
+	namespace: # 所属命名空间
+	labels: # 标签
+		controller: delpoy
+spec: # 详情描述
+	replicas: 3 # 副本数量
+	revisionHistoryLimit: 3 # 保留历史版本，默认是 10
+	paused: false # 暂停部署，默认是 false
+	progressDeadlineSeconds: 600 # 部署超时时间
+	strategy: # 策略
+	  type: RollingUpdate # 滚动更新策略
+	  rollingUPdate: # 滚动更新
+	    maxSurge: 30% # 最大额外可以存在的副本数，可以为百分比，也可以为整数
+	    maxUnavailable: 30% # 最大不可用状态的 pod 的最大值，可以为百分比，也可以为整数
+	selector: # 选择器，通过它指定该控制器管理哪些 pod 
+		matchLabels: # Labels 匹配规则
+			app: nginx-pod
+		matchExpressions: # Expressions 匹配规则
+			- {key: app, operator: In, values: [nginx-pod]}
+	template: # 模版，当副本数量不足时，会根据下面的模版创建 pod 副本
+		metadata:
+			labels:
+				app: nginx-pod
+		spec:
+			containers:
+			- name: nginx
+				image: nginx:1.17.1
+				ports:
+				- containerPort: 80
+```
+
+**创建deployment**
+
+创建pc-deployment.yaml，内容如下：
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pc-deployment
+  namespace: dev
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-pod
+  template:
+    metadata:
+      labels:
+        app: nginx-pod
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.17.1
+```
+
+```powershell
+# 创建 deployment
+# --record=true 记录每次的版本变化
+kubectl create -f pc-deployment.yaml --record=true
+
+# 查看 deloyment
+# UP-TO-DATE 最新版本的 pod 数量
+# AVAILABLE 当前可用的 pod 数量
+kubectl get deploy pc-deployment -n dev
+NAME            READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS   IMAGES         SELECTOR
+pc-deployment   3/3     3            3           15s   nginx        nginx:1.17.1   app=nginx-pod
+
+# 查看 rs 
+# 发现 rs 的名称是在原来 deployment 的名字后面添加一个 10 位数的随机串
+kubectl get rs -n dev
+
+# 查看 pod
+kubectl get pod -n dev
+
+```
+
+**扩缩容**
+
+
+
