@@ -1682,3 +1682,46 @@ topologyKey 用于指定调度时作用域
 #### 5.4.2.3 podAntiAffinity
 
 配置方式和 podAffinity 是一样的
+
+
+
+### 5.4.2污点和容忍
+
+**污点（Taints）**
+
+​	前面的调度方式都是站在 Pod 的角度上，通过在 Pod 上添加属性，来确定 Pod 是否要调度到指定的 Node 上，其实我们可以站在 Node 的角度上，通过在 Node 上添加**污点**属性，来决定是否允许 Pod 调度过来。
+
+​	Node 被设置上污点之后就和 Pod 之间存在一种相斥的关系，进而拒绝 Pod 调度进来，甚至可以将已经存在的Pod 驱逐出去。
+
+污点的格式为：`key=value:effect`, key 和 value 是污点的标签，effect 描述污点的作用，支持如下三个选项：
+
+* PreferNoSchedule: kubernetes 将尽量避免把 Pod 调度到具有该污点的 Node 上，除非没有其他节点可调度
+* NoSchedule: kubernetes 将不会把 Pod 调度到具有该污点的 Node 上，但不会影响当前 Node 上已存在的 Pod
+* NoExecute: kubernetes 将不会把 Pod 调度到具有该污点的 Node 上，同时也会将 Node 上已存在的 Pod 驱离
+
+使用 kubectl 设置和去除污点的命令：
+
+```powershell
+# 设置污点
+kubectl taint nodes node1 key=value:effect     # effect 就是上三选项
+# 去除污点
+kubectl taint nodes node1 key=effect-
+# 去除所有污点
+kubectl taint nodes node1 key-
+```
+
+```markdown
+小提示：
+	使用 kubeadm 搭建的集群，默认就会给 master 节点添加一个污点标记，所有 pod 就会不调度到 master 节点上
+```
+
+
+
+**容忍（Toleration）**
+
+​	上面介绍了污点的作用，我们可以在 node 上添加污点用于拒绝 pod 调度上来，但是如果就是想将一个 pod 调度到一个有污点的 node 上去，这时候该如何？
+
+> ​	污点就是拒绝，容忍就是忽略，Node 通过污点拒绝pod 调度上去， Pod 通过容忍忽略拒绝
+
+
+
