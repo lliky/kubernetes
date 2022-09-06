@@ -1938,5 +1938,103 @@ kubectl get pod -n dev
 
 **扩缩容**
 
+```
+kubectl scale deploy pc-deployment --replicas=5 -n dev
+kubectl edit deploy pc-deployment -n dev
+```
 
+**镜像更新**
+
+Deployment 支持两种镜像更新的策略：`重建更新` 和`滚动更新（推荐）`，可以通过 `strategy` 选项进行配置
+
+```markdown
+strategy: 指定新的 pod 替换旧的 pod 的策略，支持两个属性：
+	type: 指定策略类型，支持两种策略
+		Recreate: 在创建之前新的 pod 之前会先杀掉所有已存在的 Pod
+		RollingUpdate: 滚动更新，就是杀死一部分，就启动一部分，在更新过程中，存在两个版本的 pod
+	rollingUpdate:  当 type 为 RollingUpdate 时生效，用于为 RollingUpdate 设置参数，支持两个属性：
+		maxUnavailable:  用来指定在升级过程中不可用 Pod 的最大数量，默认为 25%。
+		maxSurge: 用来指定在升级过程中可以超过期望的 Pod 的最大数量，默认为 25%。
+```
+
+重建更新
+
+1. 编辑 pc-deployment.yaml ，在 spec 节点下添加更新策略
+
+   ```yaml
+   spec:
+     strategy: # 策略
+       type: Recreate # 重建更新
+   ```
+
+2. 创建 deploy 进行验证
+
+   ```powershell
+   # 变更镜像
+   kubectl set image deployment pc-deployment nginx=nginx:1.17.2 -n dev
+   
+   # 观察升级过程
+   kubectl get pod -n dev -w
+   ```
+
+
+
+滚动更新
+
+1. 编辑 pc-deployment.yaml ，在 spec 节点下添加更新策略
+
+   ```yaml
+   spec:
+     strategy: # 策略
+       type: RollingUpdate
+         maxUnavailable: 25%
+         maxSurge: 25%
+   ```
+
+2. 创建 deploy 进行验证
+
+   ```powershell
+   # 变更镜像
+   kubectl set image deployment pc-deployment nginx=nginx:1.17.2 -n dev
+   
+   # 观察升级过程
+   kubectl get pod -n dev -w
+   ```
+
+滚动更新过程：
+
+![rollingupdate](./images/chapter06/rollingupdate.jpeg)
+
+镜像更新中 rs 的变化：
+
+```powershell
+# 查看 rs，发现原来的 rs 的依旧存在，只是 pod 数量变为了 0，而后又新产生了一个 rs，pod 数量为 4
+# 其实这就是 deployment 能够进行版本回退的奥妙所在，后面会详细解释
+kubectl get rs -n dev
+```
+
+**版本回退**
+
+Deployment 支持版本升级过程中的暂停、继续功能以及版本回退等诸多功能，下面具体来看：
+
+Kubectl rollout: 版本升级相关功能，支持下面的选项：
+
+* Status	显示当前升级状态
+* History  显示升级历史记录
+* Pause 暂停版本升级过程
+* Resume 继续已经暂停的版本升级过程
+* Restart 重启版本升级过程
+* Undo 回滚到上一级版本（可以使用 --to-revision 回滚到指定版本）
+
+```powershell
+# 查看当前升级版本的状态
+kubectl rollout status deploy pc-deployment -n dev
+# 查看升级历史记录
+kubectl rollout history deploy pc-deployment -n dev
+# 版本回滚
+# 直接使用 --to-version=1 回滚到 1 版本
+kubectl rollout undo deployment pc-deployment --to-verison=1 -n dev
+```
+
+**金丝雀发布**
 
